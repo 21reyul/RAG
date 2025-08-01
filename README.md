@@ -35,4 +35,4 @@ And in the other hand you can create your own client to make some petitions to i
 
 In case you want to execute any querying method you have to do it this way:
 
-    python3 -m querying.<script>
+    python3 -m querying.<script># RAG
