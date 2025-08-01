@@ -1,0 +1,303 @@
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from vectordb.store_data import DataStorage
+from ollama import chat
+from ollama import ChatResponse
+import logging
+import requests
+import numpy as np
+import urllib.parse
+import faiss
+import os
+import json
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+class Retrieval():
+    def __init__(self):
+        #model_id = "BSC-LT/salamandra-7b-instruct"
+        # model_id = "HuggingFaceH4/zephyr-7b-alpha"
+        self.model_id = "llama3:8b"
+        self.datastorage = DataStorage()
+        self.index = faiss.read_index(f"{os.getcwd()}/vectordb/.faiss_index/index.faiss")
+
+        # self.tokenizer = AutoTokenizer.from_pretrained(model_id, return_tensors="pt", padding=True, truncation=True, return_attention_mask=True)
+        # self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", load_in_4bit=True)
+
+        # self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        # self.model = AutoModelForCausalLM.from_pretrained(
+        #     model_id,
+        #     device_map="auto",
+        #     torch_dtype=torch.float16
+        # )
+
+        self.vectordb = FAISS.load_local(
+            f"{os.getcwd()}/vectordb/.faiss_index", self.datastorage.model, allow_dangerous_deserialization=True)
+        self.docs = self.vectordb.docstore._dict
+
+    def generate_questions(self, query):
+        # ai_role_prompt = r"""
+        #     Ets un assistent intel·ligent i útil especialitzat en generar preguntes de seguiment i més profundes a partir d’una pregunta inicial proporcionada per l’usuari.
+        #     Els teus objectius:
+        #     - Llegeix i entén la pregunta de l’usuari (que serveix com a context).
+        #     - Identifica el tema, les suposicions o les ambigüitats de la pregunta original.
+        #     - Genera preguntes noves clares i rellevants que ajudin a aprofundir en la comprensió, promoguin el pensament crític o explorin aspectes relacionats però no distants.
+
+        #     Instruccions:
+        #     - Assumeix que l’usuari fa la pregunta per aprendre, explorar o reflexionar.
+        #     - La teva tasca és ampliar aquesta pregunta creant entre 2 i 5 preguntes noves que:
+        #     - Aclarin la intenció de l’usuari.
+        #     - L’ajudin a pensar més críticament.
+        #     - Explorïn conceptes adjacents o subjacents.
+        #     - Si la pregunta original és massa àmplia o vaga, una de les teves preguntes hauria d’abordar aquest fet.
+        #     - Mantingues les preguntes obertes sempre que sigui possible, però no vagues.
+        #     - No responguis la pregunta de l’usuari. Només formula preguntes noves i relacionades.
+        #     - No inventis temes que no estiguin implícits en la pregunta original.
+        #     - No facis preguntes que no estiguin connectades de forma clara amb la pregunta original.
+
+        #     Exemple d’entrada:
+        #     Pregunta: "Com impacta la intel·ligència artificial en l’educació?"
+
+        #     Exemple de sortida:
+        #     1. De quines maneres concretes pot la IA millorar l’aprenentatge personalitzat?
+        #     2. Quins reptes afronten les escoles a l’hora d’integrar eines d’IA?
+        #     3. Com pot canviar la IA el paper dels docents dins l’aula?
+        #     4. Hi ha preocupacions ètiques sobre la presa de decisions basada en IA dins l’educació?
+        # """
+
+        ai_role_prompt = r"""
+            You are a smart and helpful assistant specialized in generating follow-up and deeper questions based on an initial question provided by the user.
+
+            Your goals:
+            - Read and understand the user's question (which serves as context).
+            - Identify the topic, assumptions, or ambiguities in the original question.
+            - Generate 2 to 5 new, clear, and relevant questions that help deepen understanding, promote critical thinking, or explore related (but not distant) aspects.
+
+            Instructions:
+            - Assume the user is asking the question in order to learn, explore, or reflect.
+            - Your task is to expand on the original question by creating 2 to 5 new questions that:
+              - Clarify the user's intent.
+              - Encourage deeper or more critical thinking.
+              - Explore adjacent or underlying concepts.
+            - If the original question is too broad or vague, one of your questions should address that.
+            - Keep the questions open-ended whenever possible, but not vague.
+            - Do NOT answer the user's question. Only generate new, related questions.
+            - Do NOT invent topics that are not implied by the original question.
+            - Do NOT ask questions that are not clearly connected to the original one.
+
+            Example input:
+            Question: "How does artificial intelligence impact education?"
+
+            Example output:
+            1. In what specific ways can AI enhance personalized learning?
+            2. What challenges do schools face when integrating AI tools?
+            3. How might AI change the role of teachers in the classroom?
+            4. Are there ethical concerns regarding AI-based decision-making in education?
+        """
+
+
+        messages = [
+            {"role": "system", "content": ai_role_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        logging.info("Generating questions")
+        response: ChatResponse = chat(model=self.model_id, messages=messages)
+        print(response.message.content)
+        questions = []
+        for item in response.message.content:
+            for question in item.strip().split("\n"):
+                q = question.strip()
+                if q.endswith("?"):
+                    questions.append(q)
+        logging.info("Questions generated")
+        return questions
+
+    def generate_answers(self, context_text, query):
+        # ai_role_prompt = f"""
+        #     Ets un assistent que respon preguntes basant-se NOMÉS en una llista de documents de context.
+
+        #     Documents de context:
+        #     {context_text}
+
+        #     Pregunta:
+        #     {query}
+
+        #     Instruccions:
+        #     - Utilitza NOMÉS la informació proporcionada als documents de context per respondre la pregunta.
+        #     - No utilitzis cap coneixement que no es trobi explícitament als documents de context, encara que coneguis la resposta.
+        #     - Està totalment prohibit fer suposicions, inferències o deduccions basades en coneixement general o previ.
+        #     - Si la resposta no està clarament disponible al context, respon exactament: "El context no proporciona prou informació per respondre aquesta pregunta."
+        #     - No actues com un expert ni utilitzis coneixement fora del context proporcionat.
+        #     - Mantingues la resposta clara, concisa i basada només en els documents.
+
+        #     IMPORTANT: No et desviïs del context proporcionat sota cap circumstància i NOMÉS utilitza la informació del context proporcionat
+        # """
+
+        ai_role_prompt = f"""
+            You are an assistant that answers questions based ONLY on a list of context documents.
+
+            Context documents:
+            {context_text}
+
+            Question:
+            {query}
+
+            Instructions:
+            - Use ONLY the information provided in the context documents to answer the question.
+            - Do not use any knowledge that is not explicitly found in the context documents, even if you know the answer.
+            - It is strictly forbidden to make assumptions, inferences, or deductions based on general or prior knowledge.
+            - If the answer is not clearly available in the context, respond exactly with: "The context does not provide enough information to answer this question."
+            - Do not act as an expert or use knowledge outside of the provided context.
+            - Keep the answer clear, concise, and based only on the documents.
+
+            IMPORTANT: Do not deviate from the provided context under any circumstances and ONLY use the information from the provided context.
+        """
+
+
+        messages = [
+            {"role": "system", "content": ai_role_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        logging.info("Generating answer")
+        response: ChatResponse = chat(model=self.model_id, messages=messages)
+        logging.info("Answer generated")
+        return response.message.content
+
+    def search_documents(self, context, k=5):
+        def similarity(context, results):
+            vector = self.datastorage.model.embed_query(context)
+            D, I = self.index.search(np.array([vector]).astype('float32'), k)
+            for index, distance in zip(I[0], D[0]):
+                if index not in results or results[index] > distance:
+                    results[index] = distance
+            return results
+        
+        results = {}
+        if type(context) == str:
+            similarity(context, results)
+        else: 
+            for question in context:
+                similarity(question, results)
+
+        return results
+
+    # def store_generated_document(self, document):
+    #     encoded_info = urllib.parse.quote(document)
+    #     url = f"http://localhost:8000/store_info/{encoded_info}/"
+    #     try:
+    #         requests.post(url)
+    #     except Exception as e:
+    #         logging.warning(f"Failed to store document: {e}")
+
+    def no_context(self, query):
+        results = self.search_documents(query)
+        documents = [list(self.docs.values())[idx].page_content for idx in results]
+        answer = self.generate_answers(documents, query)
+        return answer
+        # self.store_generated_document(answer)
+
+    def multi_query(self, query):
+        questions = self.generate_questions(query)
+        results = self.search_documents(questions)
+        documents = [list(self.docs.values())[idx].page_content for idx in results]
+        answer = self.generate_answers(documents, query)
+        return answer
+
+    def rag_fusion(self, query):
+        questions = self.generate_questions(query)
+        results = self.search_documents(questions)
+        sorted_indices = sorted(results, key=results.get)
+        documents = [list(self.docs.values())[idx].page_content for idx in sorted_indices]
+        answer = self.generate_answers(documents, query)
+        return answer
+    
+    def query_decomposition(self, query):
+        questions = self.generate_questions(query)
+        answer = self.no_context(questions[0])
+        for question in questions:
+            answer = self.no_context(answer)
+        return answer
+
+    def step_back(self, query):
+        examples = [
+            {
+                "input": "Jan Sindel’s was born in what country?",
+                "output": "what is Jan Sindel’s personal history?"
+            }, 
+            {
+                "input": "Could the members of The Police perform lawful arrests?",
+                "output": "what can the members of The Police do?"
+            }
+        ]
+
+        ai_role_prompt = rf"""
+            You are a helpful AI assistant. Your task is to help improve the document retrieval step in a Retrieval-Augmented Generation (RAG) system by applying a "step-back" strategy.
+            Given a user's specific question, take a step back and rewrite it as a more general or explanatory version that reflects the broader topic or intent behind the question.
+
+            Then, use that broader question to retrieve background documents or context before answering the original query.
+
+            Instructions:
+            1. Read the original question carefully.
+            2. Reformulate it as a more general question that provides helpful context for retrieval.
+            3. Return only the reformulated broader query.
+
+            Original question: {query}
+            These are few examples: {examples}
+        """
+
+        messages = [
+            {
+                "role": "system", 
+                "content": ai_role_prompt
+            }, 
+            {
+                "role": "user",
+                "content": query
+            }
+        ]
+
+        logging.info(f"Generating question from {query}")
+        response: ChatResponse = chat(model=self.model_id, messages=messages)
+        logging.info("Question generated")
+        questions = self.search_documents(response.message.content)
+        documents = [list(self.docs.values())[idx].page_content for idx in questions]
+        answer = self.generate_answers(documents, query)
+        return answer
+
+    def hyde_query(self, query):
+        ai_role_prompt = rf"""Please write a scientific paper passage to answer the question
+            Question: {query}
+            Passage:
+        """
+
+        messages = [
+            {
+                "role": "system", 
+                "content": ai_role_prompt
+            }, 
+            {
+                "role": "user",
+                "content": query
+            }
+        ]
+
+        logging.info(f"Generating paper from question: {question}")
+        paper: ChatResponse = chat(model=self.model_id, messages=messages)
+        logging.info("Paper generated")
+        print(f"Lenght: {len(paper.message.content)}\tPaper: {paper.message.content}")
+        near_documents = self.search_documents(paper.message.content)   
+        documents = [list(self.docs.values())[idx].page_content for idx in near_documents]
+        answer = self.generate_answers(documents, query)
+        return answer
+
+if __name__ == "__main__":
+    retrieval = Retrieval()
+    questions = ["What is a vectordb?", "How does a vector database differ from a traditional relational database?", "What are the typical use cases of a vector database?"]
+    for question in questions:
+        print(retrieval.query_decomposition(question))

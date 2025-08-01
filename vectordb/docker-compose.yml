@@ -1,0 +1,19 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3
+    ports:
+      - "5672:5672"
+    networks:
+      - backend
+
+  app-1:
+    build: .
+    depends_on:
+      - rabbitmq
+    networks:
+      - backend
+    environment:
+      - RABBIT_HOST=rabbitmq
+
+networks:
+  backend:
