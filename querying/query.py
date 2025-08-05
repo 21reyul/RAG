@@ -222,6 +222,7 @@ class Retrieval():
         answer = self.no_context(questions[0])
         for question in questions:
             answer = self.no_context(answer)
+            print(answer)
         return answer
 
     def step_back(self, query):

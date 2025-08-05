@@ -1,12 +1,10 @@
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
-from lithops import Storage
+from langchain_ollama import OllamaEmbeddings
 from lithops import FunctionExecutor
 from fastapi import FastAPI, UploadFile, File, HTTPException
-import numpy as np
+import lithops
 import faiss
 import logging
 import os
@@ -14,7 +12,30 @@ import time
 import fitz
 
 
-BUCKET_NAME = 'storage-vectordb'
+#BUCKET_NAME = 'storage-vectordb'
+
+config = {
+    'lithops': {
+        'include_modules': [
+            'lambda_funcs.funcs',
+            'langchain_core.documents'
+        ],
+        'exclude_modules': [
+            'faiss',
+            'torch',
+            'fitz',
+            'langchain_community.vectorstores',
+            'langchain.text_splitter',
+            'langchain_ollama',
+            'fastapi',
+            'uvicorn',
+            'pymupdf',
+            'requests',
+            'lithops',
+        ]
+    }
+}
+
 
 app = FastAPI()
     
@@ -27,7 +48,9 @@ logging.basicConfig(
 class DataStorage():
     def __init__(self):
         # Alibaba-NLP/gte-multilingual-base, sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2, intfloat/multilingual-e5-small, intfloat/multilingual-e5-base, Qwen/Qwen3-Embedding-8B
-        self.model = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-small", model_kwargs={"trust_remote_code": True})
+        #self.model = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-small", model_kwargs={"trust_remote_code": True})
+        # TODO pull in case its not in local
+        self.model = OllamaEmbeddings(model="nomic-embed-text")
         self.load_previous_indexes()
 
     def load_previous_indexes(self):
@@ -55,52 +78,52 @@ class DataStorage():
             ranges.append(chunks[i:i + num])
         return ranges 
 
-    # TODO add multimodal files
+    # TODO add multimodal files and HTTP exceptions
     @app.post("/store_pdf/")
     async def store_pdf_bucket(document: UploadFile = File(...)):
         if document.content_type != "application/pdf":
             raise HTTPException(status_code=400, detail="You are only allowed to upload pdf files")
         try:
-            storage = Storage()
             content = await document.read()
             logging.info(f"Treating {document.filename}")
-            try:
+            treated_chunks = []
+            vectordb = DataStorage()
+            doc = fitz.open(stream=content, filetype="pdf")
+            full_text = ""
+            for page in doc:
+                full_text += page.get_text()
+            d = Document(page_content=full_text)
+
+            chunker = RecursiveCharacterTextSplitter(
+                chunk_size=800,  
+                chunk_overlap=0,  
+                separators=["\n\n", "\n", ".", "?", "!", " ", ""] 
+            )
+            chunks = chunker.split_documents([d])
+            logging.info(f"{document.filename} has been chunked")
+
+            def obtain_treated_documents(chunks):
                 treated_chunks = []
-                vectordb = DataStorage()
-                doc = fitz.open(stream=content, filetype="pdf")
-                full_text = ""
-                for page in doc:
-                    full_text += page.get_text()
-                d = Document(page_content=full_text)
+                for chunk in chunks:
+                    treated_chunks.append(Document(page_content=chunk.page_content))
+                return treated_chunks
 
-                chunker = RecursiveCharacterTextSplitter(
-                    chunk_size=800,  
-                    chunk_overlap=0,  
-                    separators=["\n\n", "\n", ".", "?", "!", " ", ""] 
-                )
-                chunks = chunker.split_documents([d])
-                logging.info(f"{document.filename} has been chunked")
+            def reduce_treated_documents(documents):
+                return [doc for chunk_list in documents for doc in chunk_list]
 
-                def obtain_treated_documents(chunks):
-                    for chunk in chunks:
-                        treated_chunks.append(Document(page_content=chunk.page_content))
-                    return treated_chunks
+            # TODO tolerance to more than 10 chunks to not to run more than 10 lambdas 
+            chunks_per_lambda = vectordb.calculate_ranges(chunks, 8)
+            fexec = FunctionExecutor()
+            futures = fexec.map_reduce(obtain_treated_documents, chunks_per_lambda, reduce_treated_documents)
+            fexec.wait(futures)  
+            results = fexec.get_result(futures)
+            vectordb.store_indexes(results)
+            logging.info("All chunkes had been stored correctly")
+            vectordb.load_previous_indexes()
+            logging.info("All index stored in local")
 
-                def reduce_treated_documents(documents):
-                    return [doc for chunk_list in documents for doc in chunk_list]
-
-                chunks_per_lambda = vectordb.calculate_ranges(chunks, 8)
-                fexec = FunctionExecutor()
-                futures = fexec.map_reduce(obtain_treated_documents, chunks_per_lambda, reduce_treated_documents)
-                fexec.wait(futures)  
-                results = fexec.get_result(futures)
-                vectordb.store_indexes(results)
-                logging.info("All chunkes had been stored correctly")
-                vectordb.load_previous_indexes()
-                logging.info("All index stored in local")
-
-            except Exception as e:
-                logging.error(rf"Catched exception: {e}")
+        except Exception as e:
+            logging.error(rf"Catched exception: {e}")
 
         except Exception as e:
             logging.error(rf"Catched exception: {e}")
