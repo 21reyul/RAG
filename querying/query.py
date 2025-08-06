@@ -3,10 +3,10 @@ from vectordb.store_data import DataStorage
 from ollama import chat
 from ollama import ChatResponse
 import logging
-import requests
 import numpy as np
 import faiss
-import os
+import multiprocessing
+import tqdm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,22 +70,22 @@ class Retrieval():
         ai_role_prompt = r"""
             You are a smart and helpful assistant specialized in generating follow-up and deeper questions based on an initial question provided by the user.
 
-            Your goals:
-            - Read and understand the user's question (which serves as context).
-            - Identify the topic, assumptions, or ambiguities in the original question.
-            - Generate 2 to 5 new, clear, and relevant questions that help deepen understanding, promote critical thinking, or explore related (but not distant) aspects.
+            Your role:
+            - Read and understand the user's original question.
+            - Identify its topic, scope, intent, and any ambiguity.
+            - Generate 2 to 5 new questions that explore, clarify, or deepen the original question.
 
             Instructions:
-            - Assume the user is asking the question in order to learn, explore, or reflect.
-            - Your task is to expand on the original question by creating 2 to 5 new questions that:
-              - Clarify the user's intent.
-              - Encourage deeper or more critical thinking.
-              - Explore adjacent or underlying concepts.
-            - If the original question is too broad or vague, one of your questions should address that.
-            - Keep the questions open-ended whenever possible, but not vague.
-            - Do NOT answer the user's question. Only generate new, related questions.
-            - Do NOT invent topics that are not implied by the original question.
-            - Do NOT ask questions that are not clearly connected to the original one.
+            - Assume the user is seeking to learn, analyze, or reflect more deeply on the topic.
+            - Do NOT answer or rephrase the original question.
+            - Do NOT provide introductions, explanations, or summaries—only list the new questions.
+            - Do NOT go beyond the scope of the original topic.
+            - Keep questions directly relevant, open-ended when appropriate, and thought-provoking.
+            - If the original question is vague or broad, include a clarifying question as part of your output.
+
+            Output format:
+            - Output only the questions, numbered from 1 to 5.
+            - Do not include any headings, greetings, comments, or filler content.
 
             Example input:
             Question: "How does artificial intelligence impact education?"
@@ -96,8 +96,7 @@ class Retrieval():
             3. How might AI change the role of teachers in the classroom?
             4. Are there ethical concerns regarding AI-based decision-making in education?
         """
-
-
+       
         messages = [
             {"role": "system", "content": ai_role_prompt},
             {"role": "user", "content": query},
@@ -105,13 +104,10 @@ class Retrieval():
 
         logging.info("Generating questions")
         response: ChatResponse = chat(model=self.model_id, messages=messages)
-        print(response.message.content)
         questions = []
-        for item in response.message.content:
-            for question in item.strip().split("\n"):
-                q = question.strip()
-                if q.endswith("?"):
-                    questions.append(q)
+        for question in response.message.content.split("\n"):
+            print(question)
+            questions.append(question)
         logging.info("Questions generated")
         return questions
 
@@ -176,29 +172,30 @@ class Retrieval():
                     results[index] = distance
             return results
         
-        results = {}
         if type(context) == str:
+            results = {}
             similarity(context, results)
         else: 
-            for question in context:
-                similarity(question, results)
+            results = multiprocessing.Manager().dict()
+            process = []
+            for question, _ in zip(context, range(context)):
+                process.append(multiprocessing.Process(target = similarity, args=(question, results)))
+
+            for p in process:
+                p.start()
+
+            for p in tqdm(process, total = len(process)):
+                p.join()
 
         return results
 
-    # def store_generated_document(self, document):
-    #     encoded_info = urllib.parse.quote(document)
-    #     url = f"http://localhost:8000/store_info/{encoded_info}/"
-    #     try:
-    #         requests.post(url)
-    #     except Exception as e:
-    #         logging.warning(f"Failed to store document: {e}")
+    # TODO PARALEL FUNCTIONS TO IMPROVE THE PERFORMANCE
 
     def no_context(self, query):
         results = self.search_documents(query)
         documents = [list(self.docs.values())[idx].page_content for idx in results]
         answer = self.generate_answers(documents, query)
         return answer
-        # self.store_generated_document(answer)
 
     def multi_query(self, query):
         questions = self.generate_questions(query)
@@ -217,11 +214,22 @@ class Retrieval():
     
     def query_decomposition(self, query):
         questions = self.generate_questions(query)
-        answer = self.no_context(questions[0])
+        context = []
         for question in questions:
-            answer = self.no_context(answer)
-            print(answer)
-        return answer
+            documents = self.search_documents(question)
+            documents = [list(self.docs.values())[idx].page_content for idx in documents]
+            for document in documents:
+                if document not in context:
+                    context.append(document)
+
+        answer = None
+        for ctx, question in zip(context, questions):
+            print(f"{ctx} and {question}")
+            if answer is not None:
+                print("new context added")
+                ctx = ctx + "\n" + answer
+                print(answer)
+            answer = self.generate_answers(ctx, question)
 
     def step_back(self, query):
         examples = [
@@ -297,6 +305,7 @@ class Retrieval():
 
 if __name__ == "__main__":
     retrieval = Retrieval()
-    questions = ["What is a vectordb?", "How does a vector database differ from a traditional relational database?", "What are the typical use cases of a vector database?"]
+    # , "How does a vector database differ from a traditional relational database?", "What are the typical use cases of a vector database?"
+    questions = ["What is a vectordb?"]
     for question in questions:
-        print(retrieval.no_context(question))
+        print(retrieval.query_decomposition(question))
