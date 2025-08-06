@@ -14,27 +14,26 @@ import fitz
 
 #BUCKET_NAME = 'storage-vectordb'
 
-config = {
-    'lithops': {
-        'include_modules': [
-            'lambda_funcs.funcs',
-            'langchain_core.documents'
-        ],
-        'exclude_modules': [
-            'faiss',
-            'torch',
-            'fitz',
-            'langchain_community.vectorstores',
-            'langchain.text_splitter',
-            'langchain_ollama',
-            'fastapi',
-            'uvicorn',
-            'pymupdf',
-            'requests',
-            'lithops',
-        ]
-    }
-}
+# config = {
+#     'lithops': {
+#         'include_modules': [
+#             'lambda_funcs.funcs',
+#             'langchain_core.documents'
+#         ],
+#         'exclude_modules': [
+#             'faiss',
+#             'fitz',
+#             'langchain_community.vectorstores',
+#             'langchain.text_splitter',
+#             'langchain_ollama',
+#             'fastapi',
+#             'uvicorn',
+#             'pymupdf',
+#             'requests',
+#             'lithops',
+#         ]
+#     }
+# }
 
 
 app = FastAPI()
@@ -44,29 +43,32 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
+path = "/tmp/.faiss_index"
+
 # TODO change the storage with related_subject to current subject when you have the agent per subject implementation ready
 class DataStorage():
     def __init__(self):
         # Alibaba-NLP/gte-multilingual-base, sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2, intfloat/multilingual-e5-small, intfloat/multilingual-e5-base, Qwen/Qwen3-Embedding-8B
         #self.model = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-small", model_kwargs={"trust_remote_code": True})
         # TODO pull in case its not in local
-        self.model = OllamaEmbeddings(model="nomic-embed-text")
+        self.model = OllamaEmbeddings(model="nomic-embed-text:v1.5")
         self.load_previous_indexes()
 
     def load_previous_indexes(self):
         # In case that we have the previous indexes we load them into the vdb
-        if os.path.exists(f"{os.getcwd()}/.faiss_index"):
+        if os.path.exists(path):
             logging.info("Loading old indexes")
-            self.vectordb = FAISS.load_local(f"{os.getcwd()}/.faiss_index", self.model, allow_dangerous_deserialization=True)
+            self.vectordb = FAISS.load_local(path, self.model, allow_dangerous_deserialization=True)
 
     def store_indexes(self, documents):
-        if os.path.exists(f"{os.getcwd()}/.faiss_index"):
-            faiss_index = FAISS.load_local(f"{os.getcwd()}/.faiss_index", self.model, allow_dangerous_deserialization=True)
+        if os.path.exists(path):
+            faiss_index = FAISS.load_local(path, self.model, allow_dangerous_deserialization=True)
             faiss_index.add_documents(documents)
         else:
             faiss_index = FAISS.from_documents(documents, self.model)    
-            
-        faiss_index.save_local(".faiss_index")
+        
+        faiss_index.save_local(path)
+
 
 
     # def search_similarity_subject(self, content):

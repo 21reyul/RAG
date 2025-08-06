@@ -1,5 +1,3 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from vectordb.store_data import DataStorage
 from ollama import chat
@@ -7,23 +5,23 @@ from ollama import ChatResponse
 import logging
 import requests
 import numpy as np
-import urllib.parse
 import faiss
 import os
-import json
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
+path = "/tmp/.faiss_index"
+
 class Retrieval():
     def __init__(self):
         #model_id = "BSC-LT/salamandra-7b-instruct"
         # model_id = "HuggingFaceH4/zephyr-7b-alpha"
-        self.model_id = "llama3:8b"
+        self.model_id = "llama3.2:1b"
         self.datastorage = DataStorage()
-        self.index = faiss.read_index(f"{os.getcwd()}/vectordb/.faiss_index/index.faiss")
+        self.index = faiss.read_index(f"{path}/index.faiss")
 
         # self.tokenizer = AutoTokenizer.from_pretrained(model_id, return_tensors="pt", padding=True, truncation=True, return_attention_mask=True)
         # self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", load_in_4bit=True)
@@ -36,7 +34,7 @@ class Retrieval():
         # )
 
         self.vectordb = FAISS.load_local(
-            f"{os.getcwd()}/vectordb/.faiss_index", self.datastorage.model, allow_dangerous_deserialization=True)
+            path, self.datastorage.model, allow_dangerous_deserialization=True)
         self.docs = self.vectordb.docstore._dict
 
     def generate_questions(self, query):
@@ -301,4 +299,4 @@ if __name__ == "__main__":
     retrieval = Retrieval()
     questions = ["What is a vectordb?", "How does a vector database differ from a traditional relational database?", "What are the typical use cases of a vector database?"]
     for question in questions:
-        print(retrieval.query_decomposition(question))
+        print(retrieval.no_context(question))
