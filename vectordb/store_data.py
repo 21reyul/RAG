@@ -4,37 +4,9 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from lithops import FunctionExecutor
 from fastapi import FastAPI, UploadFile, File, HTTPException
-import lithops
-import faiss
 import logging
 import os
-import time
 import fitz
-
-
-#BUCKET_NAME = 'storage-vectordb'
-
-# config = {
-#     'lithops': {
-#         'include_modules': [
-#             'lambda_funcs.funcs',
-#             'langchain_core.documents'
-#         ],
-#         'exclude_modules': [
-#             'faiss',
-#             'fitz',
-#             'langchain_community.vectorstores',
-#             'langchain.text_splitter',
-#             'langchain_ollama',
-#             'fastapi',
-#             'uvicorn',
-#             'pymupdf',
-#             'requests',
-#             'lithops',
-#         ]
-#     }
-# }
-
 
 app = FastAPI()
     
@@ -45,11 +17,12 @@ logging.basicConfig(
 
 path = "/tmp/.faiss_index"
 
+# This number is the maximum lambdas that you want to use in order to store the indexs of the documents, you can change it on your own
+num = 10
+
 # TODO change the storage with related_subject to current subject when you have the agent per subject implementation ready
 class DataStorage():
     def __init__(self):
-        # Alibaba-NLP/gte-multilingual-base, sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2, intfloat/multilingual-e5-small, intfloat/multilingual-e5-base, Qwen/Qwen3-Embedding-8B
-        #self.model = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-small", model_kwargs={"trust_remote_code": True})
         # TODO pull in case its not in local
         self.model = OllamaEmbeddings(model="nomic-embed-text:v1.5")
         self.load_previous_indexes()
@@ -69,11 +42,6 @@ class DataStorage():
         
         faiss_index.save_local(path)
 
-
-
-    # def search_similarity_subject(self, content):
-    #     return self.vectordb.similarity_search(content, k=1, filter={"source" : "subjects"})
-
     def calculate_ranges(self, chunks, num):
         ranges = []
         for i in range(0, len(chunks), num): 
@@ -88,7 +56,6 @@ class DataStorage():
         try:
             content = await document.read()
             logging.info(f"Treating {document.filename}")
-            treated_chunks = []
             vectordb = DataStorage()
             doc = fitz.open(stream=content, filetype="pdf")
             full_text = ""
@@ -113,12 +80,20 @@ class DataStorage():
             def reduce_treated_documents(documents):
                 return [doc for chunk_list in documents for doc in chunk_list]
 
-            # TODO tolerance to more than 10 chunks to not to run more than 10 lambdas 
             chunks_per_lambda = vectordb.calculate_ranges(chunks, 8)
             fexec = FunctionExecutor()
-            futures = fexec.map_reduce(obtain_treated_documents, chunks_per_lambda, reduce_treated_documents)
-            fexec.wait(futures)  
-            results = fexec.get_result(futures)
+            if len(chunks_per_lambda) >= num:
+                results = []
+                for i in range(0, len(chunks_per_lambda), num):
+                    futures = fexec.map_reduce(obtain_treated_documents, chunks_per_lambda[i:i + num], reduce_treated_documents)
+                    fexec.wait(futures)  
+                    results = fexec.get_result(futures)
+                    vectordb.store_indexes(results)
+            else:
+                futures = fexec.map_reduce(obtain_treated_documents, chunks_per_lambda, reduce_treated_documents)
+                fexec.wait(futures)  
+                results = fexec.get_result(futures)
+
             vectordb.store_indexes(results)
             logging.info("All chunkes had been stored correctly")
             vectordb.load_previous_indexes()
