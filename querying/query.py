@@ -17,56 +17,15 @@ path = "/tmp/.faiss_index"
 
 class Retrieval():
     def __init__(self):
-        #model_id = "BSC-LT/salamandra-7b-instruct"
-        # model_id = "HuggingFaceH4/zephyr-7b-alpha"
         self.model_id = "llama3.2:1b"
         self.datastorage = DataStorage()
         self.index = faiss.read_index(f"{path}/index.faiss")
-
-        # self.tokenizer = AutoTokenizer.from_pretrained(model_id, return_tensors="pt", padding=True, truncation=True, return_attention_mask=True)
-        # self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", load_in_4bit=True)
-
-        # self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        # self.model = AutoModelForCausalLM.from_pretrained(
-        #     model_id,
-        #     device_map="auto",
-        #     torch_dtype=torch.float16
-        # )
 
         self.vectordb = FAISS.load_local(
             path, self.datastorage.model, allow_dangerous_deserialization=True)
         self.docs = self.vectordb.docstore._dict
 
     def generate_questions(self, query):
-        # ai_role_prompt = r"""
-        #     Ets un assistent intel·ligent i útil especialitzat en generar preguntes de seguiment i més profundes a partir d’una pregunta inicial proporcionada per l’usuari.
-        #     Els teus objectius:
-        #     - Llegeix i entén la pregunta de l’usuari (que serveix com a context).
-        #     - Identifica el tema, les suposicions o les ambigüitats de la pregunta original.
-        #     - Genera preguntes noves clares i rellevants que ajudin a aprofundir en la comprensió, promoguin el pensament crític o explorin aspectes relacionats però no distants.
-
-        #     Instruccions:
-        #     - Assumeix que l’usuari fa la pregunta per aprendre, explorar o reflexionar.
-        #     - La teva tasca és ampliar aquesta pregunta creant entre 2 i 5 preguntes noves que:
-        #     - Aclarin la intenció de l’usuari.
-        #     - L’ajudin a pensar més críticament.
-        #     - Explorïn conceptes adjacents o subjacents.
-        #     - Si la pregunta original és massa àmplia o vaga, una de les teves preguntes hauria d’abordar aquest fet.
-        #     - Mantingues les preguntes obertes sempre que sigui possible, però no vagues.
-        #     - No responguis la pregunta de l’usuari. Només formula preguntes noves i relacionades.
-        #     - No inventis temes que no estiguin implícits en la pregunta original.
-        #     - No facis preguntes que no estiguin connectades de forma clara amb la pregunta original.
-
-        #     Exemple d’entrada:
-        #     Pregunta: "Com impacta la intel·ligència artificial en l’educació?"
-
-        #     Exemple de sortida:
-        #     1. De quines maneres concretes pot la IA millorar l’aprenentatge personalitzat?
-        #     2. Quins reptes afronten les escoles a l’hora d’integrar eines d’IA?
-        #     3. Com pot canviar la IA el paper dels docents dins l’aula?
-        #     4. Hi ha preocupacions ètiques sobre la presa de decisions basada en IA dins l’educació?
-        # """
-
         ai_role_prompt = r"""
             You are a smart and helpful assistant specialized in generating follow-up and deeper questions based on an initial question provided by the user.
 
@@ -112,26 +71,6 @@ class Retrieval():
         return questions
 
     def generate_answers(self, context_text, query):
-        # ai_role_prompt = f"""
-        #     Ets un assistent que respon preguntes basant-se NOMÉS en una llista de documents de context.
-
-        #     Documents de context:
-        #     {context_text}
-
-        #     Pregunta:
-        #     {query}
-
-        #     Instruccions:
-        #     - Utilitza NOMÉS la informació proporcionada als documents de context per respondre la pregunta.
-        #     - No utilitzis cap coneixement que no es trobi explícitament als documents de context, encara que coneguis la resposta.
-        #     - Està totalment prohibit fer suposicions, inferències o deduccions basades en coneixement general o previ.
-        #     - Si la resposta no està clarament disponible al context, respon exactament: "El context no proporciona prou informació per respondre aquesta pregunta."
-        #     - No actues com un expert ni utilitzis coneixement fora del context proporcionat.
-        #     - Mantingues la resposta clara, concisa i basada només en els documents.
-
-        #     IMPORTANT: No et desviïs del context proporcionat sota cap circumstància i NOMÉS utilitza la informació del context proporcionat
-        # """
-
         ai_role_prompt = f"""
             You are an assistant that answers questions based ONLY on a list of context documents.
 
@@ -306,6 +245,6 @@ class Retrieval():
 if __name__ == "__main__":
     retrieval = Retrieval()
     # , "How does a vector database differ from a traditional relational database?", "What are the typical use cases of a vector database?"
-    questions = ["What is a vectordb?"]
+    questions = ["Querido lector"]
     for question in questions:
-        print(retrieval.query_decomposition(question))
+        print(retrieval.no_context(question))
