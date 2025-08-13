@@ -241,10 +241,3 @@ class Retrieval():
         documents = [list(self.docs.values())[idx].page_content for idx in near_documents]
         answer = self.generate_answers(documents, query)
         return answer
-
-if __name__ == "__main__":
-    retrieval = Retrieval()
-    # , "How does a vector database differ from a traditional relational database?", "What are the typical use cases of a vector database?"
-    questions = ["Querido lector"]
-    for question in questions:
-        print(retrieval.no_context(question))

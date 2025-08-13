@@ -17,12 +17,12 @@ import os
 
 url = "http://localhost:8000/upload_documents/"
 
-file_paths = [f"{os.getcwd()}/data/models.csv"]
+file_paths = [f"{os.getcwd()}/data/vectords.pdf"]
 
 files = []
 for path in file_paths:
     f = open(path, "rb")
-    files.append(("documents", (os.path.basename(path), f, "csv")))
+    files.append(("documents", (os.path.basename(path), f, "pdf")))
 
 response = requests.post(url, files=files)
 
