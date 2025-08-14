@@ -4,7 +4,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from lithops import FunctionExecutor
 from fastapi import FastAPI, UploadFile, File, HTTPException
-import pandas as pd
+#import pandas as pd
 from json import loads, dumps
 import logging
 import os
@@ -46,16 +46,19 @@ class DataStorage():
         return ranges 
     
     def ranges_per_lambda(self, chunks, num_lambdas=num):
-        ranges = []
+        if isinstance(chunks, list):
+            ranges = []
 
-        # We obtain the chunk size that each lambda is going to process from the document
-        chunk_size = len(chunks) // num_lambdas
-        if chunk_size == 0:
-            chunk_size += 1
-        
-        # We calculate the range of text that each lambda is going to process from document treated
-        for i in range(len(chunks)):
-            ranges.append(chunks[i:i + chunk_size])
+            # We obtain the chunk size that each lambda is going to process from the document
+            chunk_size = len(chunks) // num_lambdas
+            if chunk_size == 0:
+                chunk_size += 1
+            
+            # We calculate the range of text that each lambda is going to process from document treated
+            for i in range(len(chunks)):
+                ranges.append(chunks[i:i + chunk_size])
+        else:
+            ranges = [chunks]
 
         return ranges
 
@@ -78,9 +81,9 @@ class DataStorage():
                     result.extend(t)
                 else:
                     result.append(t)
-                    
+
             logging.info(f"Loading embedding model: {model_name}")
-            model = OllamaEmbeddings(model=model_name, verbose=False)
+            model = OllamaEmbeddings(model=model_name)#, verbose=False)
             logging.info("Embedding model generated")
             
             logging.info("Generating Embeddings")
@@ -113,7 +116,7 @@ class DataStorage():
     
 
     # TODO treat multiple documents in different process in the local machine
-    @app.post("/upload_documents/")
+    @app.post("/upload_document/")
     async def upload_documents(documents: list[UploadFile] = File(...)):
         
         # For each document passed into the vectordb
@@ -144,16 +147,17 @@ class DataStorage():
                             full_text = full_text.decode("utf-8")
 
                         case "xlsx" | "csv":
-                            if doc_type == "xlsx":
-                                df = await pd.read_excel(f"{os.getcwd()}/data/{document.filename}")
+                            # if doc_type == "xlsx":
+                            #     df = pd.read_excel(f"{os.getcwd()}/data/{document.filename}")
 
-                            else:
-                                df = await pd.read_csv(f"{os.getcwd()}/data/{document.filename}")
+                            # else:
+                            #     df = pd.read_csv(f"{os.getcwd()}/data/{document.filename}")
 
-                            result = df.to_json(orient="table", index=False)
-                            parsed = loads(result)
-                            del parsed["schema"]
-                            full_text = dumps(parsed, indent=4)
+                            # result = df.to_json(orient="table", index=False)
+                            # parsed = loads(result)
+                            # del parsed["schema"]
+                            # full_text = dumps(parsed, indent=4)
+                            pass
 
                         # TODO aks if necessairy because an OCR method is needed and the lambdas are not going to support the .yml
                         case "jpg" | "png":
@@ -189,6 +193,7 @@ class DataStorage():
                         # We calculate the chunks that will consume each lambda thrown
                         chunks_per_lambda = vectordb.calculate_ranges(chunks, 8)
                         fexec = FunctionExecutor()
+
                         # In case the number of lambdas that we will run is bigger than a fixed number defined by the client we will execute in different series
                         if len(chunks_per_lambda) >= num:
                             results = []
@@ -205,6 +210,7 @@ class DataStorage():
                         raise HTTPException(status_code=500, detail=f"Catched excpetion, {e}, while treating the partitions of the document")
                 
                     try:
+                        print(results)
                         vectordb.store_indexes(results)
                         logging.info("All chunkes had been stored correctly")
 
@@ -217,9 +223,8 @@ class DataStorage():
                     raise HTTPException(status_code=500)
     
     # This function provides the user to insert information manually
-    @app.post("/store_info/")
+    @app.post("/upload_info/{information}")
     def store_documents(information: str):
-        docs = []
         vectordb = DataStorage()
-        docs.append((Document(page_content=information)))
-        vectordb.store_indexes(docs)    
+        print("Information recieved ", information)
+        vectordb.store_indexes(information)    

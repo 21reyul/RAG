@@ -17,7 +17,7 @@ path = "/tmp/.faiss_index"
 
 class Retrieval():
     def __init__(self):
-        self.model_id = "llama3.2:1b"
+        self.model_id = "llama3.1:8b"
         self.datastorage = DataStorage()
         self.index = faiss.read_index(f"{path}/index.faiss")
 
@@ -102,7 +102,7 @@ class Retrieval():
         logging.info("Answer generated")
         return response.message.content
 
-    def search_documents(self, context, k=5):
+    def search_documents(self, context, k=10):
         def similarity(context, results):
             vector = self.datastorage.model.embed_query(context)
             D, I = self.index.search(np.array([vector]).astype('float32'), k)
@@ -110,29 +110,20 @@ class Retrieval():
                 if index not in results or results[index] > distance:
                     results[index] = distance
             return results
-        
+
+        results = {}
         if type(context) == str:
-            results = {}
             similarity(context, results)
         else: 
-            results = multiprocessing.Manager().dict()
-            process = []
-            for question, _ in zip(context, range(context)):
-                process.append(multiprocessing.Process(target = similarity, args=(question, results)))
-
-            for p in process:
-                p.start()
-
-            for p in tqdm(process, total = len(process)):
-                p.join()
-
+            for question in context:
+                similarity(question, results)
+                
         return results
-
-    # TODO PARALEL FUNCTIONS TO IMPROVE THE PERFORMANCE
 
     def no_context(self, query):
         results = self.search_documents(query)
         documents = [list(self.docs.values())[idx].page_content for idx in results]
+        logging.info(documents)
         answer = self.generate_answers(documents, query)
         return answer
 
@@ -233,7 +224,7 @@ class Retrieval():
             }
         ]
 
-        logging.info(f"Generating paper from question: {question}")
+        logging.info(f"Generating paper from question: {query}")
         paper: ChatResponse = chat(model=self.model_id, messages=messages)
         logging.info("Paper generated")
         print(f"Lenght: {len(paper.message.content)}\tPaper: {paper.message.content}")
@@ -241,3 +232,6 @@ class Retrieval():
         documents = [list(self.docs.values())[idx].page_content for idx in near_documents]
         answer = self.generate_answers(documents, query)
         return answer
+    
+if __name__ == "__main__":
+    print(Retrieval().no_context("Why does Elizabeth Bennet feel “no very cordial feelings” toward Mr. Darcy after their first meeting at the ball?"))
